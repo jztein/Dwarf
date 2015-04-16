@@ -1,6 +1,7 @@
 package dwarf
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -12,39 +13,72 @@ import (
 func init() {
 	http.HandleFunc("/", root)
 	http.HandleFunc("/savedoc", saveDoc)
+	http.HandleFunc("/onedoc", oneDoc)
+}
+
+func oneDoc(w http.ResponseWriter, r *http.Request) {
+	ctx := appengine.NewContext(r)
+	dockey_encoded := r.FormValue("dockey")
+	doc := new(Document)
+	if dockey_encoded != "" {
+		dockey, _ := datastore.DecodeKey(dockey_encoded)
+		if err := datastore.Get(ctx, dockey, doc); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}	
+		doc.EncodedKey = dockey_encoded
+	}
+
+
+
+	if err := editingTemplate.Execute(w, doc); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+
+type KeyDoc struct {
+	Name string
+	Key string
 }
 
 
 func root(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	// Get from datastore
 	limit := 20
 	q := datastore.NewQuery("Document").Ancestor(documentKey(c)).Order("-LastUpdated").Limit(limit)
 	documents := make([]Document, 0, limit)
-	if _, err := q.GetAll(c, &documents); err != nil {
+	keys, err := q.GetAll(c, &documents)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if err := readingTemplate.Execute(w, documents); err != nil {
-		default_doc := Document {
-			Name: "black",
-			Content: "Catch me if you can",
-			LastUpdated: time.Now(),
+	num_docs := len(documents)
+	key_docs := make([]KeyDoc, num_docs);
+	for i := 0; i < num_docs; i++ {
+		key_doc := KeyDoc {
+			Name: documents[i].Name,
+			Key: keys[i].Encode(),
 		}
-		readingTemplate.Execute(w, []Document{default_doc})
+		key_docs[i] = key_doc
+	}
+
+	if err := folderTemplate.Execute(w, key_docs); err != nil {
+		fmt.Fprint(w, "Error making key doc in template")
 	}
 }
 
 
-type  Document struct {
+type Document struct {
 	Name string
 	Content string
 	LastUpdated time.Time
+	EncodedKey string
 }
 
 
 func documentKey(ctx appengine.Context) *datastore.Key {
-	return datastore.NewKey(ctx, "DocBook", "default_docbook", 0, nil)
+	return datastore.NewKey(ctx, "DocumentParent", "documentkey", 0, nil)
 }
 
 
@@ -54,8 +88,14 @@ func saveDoc(w http.ResponseWriter, r *http.Request) {
 		Content: r.FormValue("doctext"),
 		Name: r.FormValue("docname"),
 		LastUpdated: time.Now(),
+		EncodedKey: r.FormValue("dockey"),
 	}
-	doc_key := datastore.NewIncompleteKey(ctx, "Document", documentKey(ctx))
+	var doc_key *datastore.Key
+	if doc.EncodedKey == "" {
+		doc_key = datastore.NewIncompleteKey(ctx, "Document", documentKey(ctx))
+	} else {
+		doc_key, _ = datastore.DecodeKey(doc.EncodedKey)
+	}
 	_, err := datastore.Put(ctx, doc_key, &doc)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -64,7 +104,8 @@ func saveDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 
-var readingTemplate = template.Must(template.New("ty").Parse(editingTemplateHTML))
+var folderTemplate = template.Must(template.New("Folder").Parse(folderTemplateHTML))
+var editingTemplate = template.Must(template.New("EditOneDoc").Parse(editingTemplateHTML))
 
 
 const editingTemplateHTML = `
@@ -72,15 +113,34 @@ const editingTemplateHTML = `
   <body>
     <div>
       <form action="/savedoc" method="post">
-        <div><input name="docname" cols="80"></input></div>
-        <div><textarea name="doctext" rows="10" cols="80"></textarea></div>
+        <div><input name="docname" value="{{ .Name }}" cols="80"></input></div>
+        <div>
+            <textarea name="doctext" rows="10" cols="80">{{ .Content }}</textarea>
+        </div>
+        <div><input name="dockey" type="hidden" value="{{ .EncodedKey }}"></input></div>
         <div><input type="submit" value="Save doc"></div>
       </form>
     </div>
+   <div>
+      <p>{{ .Name }}, {{ .LastUpdated.Format "Mon Jan 2" }}</p>
+      <p>{{ .Content }}</p>
+   </div>
+  </body>
+</html>   
+`
+
+const folderTemplateHTML = `
+<html>
+  <body>
+    <div>
+      <h1>Files</h1>
+    </div>
+    </div>
     {{range .}}
       <div>
-        <p>{{ .Name }}, {{ .LastUpdated.Format "Mon Jan 2" }}</p>
-        <p>{{ .Content }}</p>
+        <a href="/onedoc?dockey={{.Key}}">
+          {{ .Name }}
+        </a>
       </div>
     {{end}}
   </body>
