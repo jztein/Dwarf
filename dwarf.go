@@ -158,6 +158,7 @@ func Markdowner(md_text string) template.HTML {
 
 	newLine := true
 	inUl := false
+	inItalics := false
 
 	for i := range md_text {
 		c := md_text[i]
@@ -172,8 +173,6 @@ func Markdowner(md_text string) template.HTML {
 			if c == '\n' && inUl {
 				buffer.WriteString("</ul>")
 				inUl = false
-			} else if c == ' ' || c == '\t' {
-				buffer.WriteByte(c)
 			} else if c == '+' || c == '-' {
 				if inUl {
 					buffer.WriteString("<li>")
@@ -182,7 +181,14 @@ func Markdowner(md_text string) template.HTML {
 					buffer.WriteString("<ul><li>")
 				}
 				newLine = false
-			} else if c != '\n' {
+			} else if c == '*' {
+				if inItalics {
+					buffer.WriteString("</i>")
+				} else {
+					buffer.WriteString("<i>")
+				}
+				inItalics = !inItalics
+			} else if c != '\n' { // Must be last.
 				buffer.WriteByte(c)
 				newLine = false
 			}
@@ -190,6 +196,13 @@ func Markdowner(md_text string) template.HTML {
 			if c == '\n' {
 				newLine = true
 				buffer.WriteString("<br/>")
+			} else if c == '*' {
+				if inItalics {
+					buffer.WriteString("</i>")
+				} else {
+					buffer.WriteString("<i>")
+				}
+				inItalics = !inItalics
 			} else {
 				buffer.WriteByte(c)
 			}
