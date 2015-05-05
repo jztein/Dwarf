@@ -1,11 +1,12 @@
 package dwarf
 
 import (
+	"bytes"
 	"fmt"
+	"html/template"
 	"net/http"
 	"time"
-
-	"html/template"
+	
 	"appengine"
 	"appengine/datastore"
 )
@@ -29,7 +30,7 @@ func oneDoc(w http.ResponseWriter, r *http.Request) {
 		doc.EncodedKey = dockey_encoded
 	}
 
-
+	doc.Html = Markdowner(doc.Content)
 
 	if err := editingTemplate.Execute(w, doc); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -72,6 +73,7 @@ func root(w http.ResponseWriter, r *http.Request) {
 type Document struct {
 	Name string
 	Content string
+	Html template.HTML
 	LastUpdated time.Time
 	EncodedKey string
 }
@@ -123,7 +125,7 @@ const editingTemplateHTML = `
     </div>
    <div>
       <p>{{ .Name }}, {{ .LastUpdated.Format "Mon Jan 2" }}</p>
-      <p>{{ .Content }}</p>
+      <div>{{ .Html }}</div>
    </div>
   </body>
 </html>   
@@ -146,3 +148,53 @@ const folderTemplateHTML = `
   </body>
 </html>
 `
+
+
+// UTILS
+
+func Markdowner(md_text string) template.HTML {
+	html_text := make([]byte, 0, len(md_text) << 1)
+	buffer := bytes.NewBuffer(html_text)
+
+	newLine := true
+	inUl := false
+
+	for i := range md_text {
+		c := md_text[i]
+
+		// Ignore carriage returns.
+		if c == '\r' {
+			continue
+		}
+
+		if newLine {
+ 
+			if c == '\n' && inUl {
+				buffer.WriteString("</ul>")
+				inUl = false
+			} else if c == ' ' || c == '\t' {
+				buffer.WriteByte(c)
+			} else if c == '+' || c == '-' {
+				if inUl {
+					buffer.WriteString("<li>")
+				} else {
+					inUl = true
+					buffer.WriteString("<ul><li>")
+				}
+				newLine = false
+			} else if c != '\n' {
+				buffer.WriteByte(c)
+				newLine = false
+			}
+		} else {
+			if c == '\n' {
+				newLine = true
+				buffer.WriteString("<br/>")
+			} else {
+				buffer.WriteByte(c)
+			}
+		}
+	}
+
+	return template.HTML(buffer.Bytes())
+}
